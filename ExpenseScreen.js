@@ -91,6 +91,31 @@ export default function ExpenseScreen() {
       await loadExpenses();
     }
 
+    useEffect(() => {
+        let query = "SELECT * FROM expenses";
+        let params = [];
+        if (filter === "week") {
+            const today = new Date();
+            const weekStart = new Date(today);
+            weekStart.setDate(today.getDate() - today.getDay());
+            const startString = weekStart.toISOString().split("T")[0];
+            
+            query += " WHERE date >= ?";
+            params.push(startString);
+        }
+        if (filter === "month") {
+            const today = new Date();
+            const monthStart = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-01`;
+            query += " WHERE date >= ?";
+            params.push(monthStart);
+        }
+        tx.executeSql(query, params, (_, { rows }) => {
+            setExpenses(rows._array);
+        });
+        loadExpenses();
+    }, [filter]);
+
+
     setup();
   }, []);
 
@@ -128,6 +153,9 @@ export default function ExpenseScreen() {
           style={styles.input}
         />
         <Button title="Add Expense" onPress={addExpense} />
+        <Button title="All" onPress={() => setFilter("all")} />
+        <Button title="This Week" onPress={() => setFilter("week")} />
+        <Button title="This Month" onPress={() => setFilter("month")} />
       </View>
 
       <FlatList
