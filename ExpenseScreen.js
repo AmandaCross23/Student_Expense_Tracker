@@ -7,6 +7,7 @@ import {
   Button,
   FlatList,
   TouchableOpacity,
+  Modal,
   StyleSheet,
 } from 'react-native';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -18,64 +19,100 @@ export default function ExpenseScreen() {
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState('');
   const [note, setNote] = useState('');
-  const [date, setDate] = useState('');
   const [filter, setFilter] = useState("all");
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editItem, setEditItem] = useState(null);
+  const [editAmount, setEditAmount] = useState('');
+  const [editCategory, setEditCategory] = useState('');
+  const [editNote, setEditNote] = useState('');
+  
+  const totalSpent = expenses.reduce((sum, e) => sum + e.amount, 0);
+  const categoryTotals = expenses.reduce((acc, e) => {
+    acc[e.category] = (acc[e.category] || 0) + e.amount;
+    return acc;
+  }, {});
 
   const loadExpenses = async () => {
-    const rows = await db.getAllAsync(
-      'SELECT * FROM expenses ORDER BY id DESC;'
-    );
+    let query = "SELECT * FROM expenses";
+    let params = [];
+
+    if (filter === "week") {
+      const today = new Date();
+      const weekStart = new Date(today);
+      weekStart.setDate(today.getDate() - today.getDay());
+      const startString = weekStart.toISOString().split("T")[0];
+
+      query += " WHERE date >= ?";
+      params.push(startString);
+    }
+
+    if (filter === "month") {
+      const today = new Date();
+      const monthStart = `${today.getFullYear()}-${String(
+        today.getMonth() + 1
+      ).padStart(2, "0")}-01`;
+
+      query += " WHERE date >= ?";
+      params.push(monthStart);
+    }
+
+    query += " ORDER BY id DESC;";
+
+    const rows = await db.getAllAsync(query, params);
     setExpenses(rows);
   };
+
   const addExpense = async () => {
     const amountNumber = parseFloat(amount);
 
-    if (isNaN(amountNumber) || amountNumber <= 0) {
-      // Basic validation: ignore invalid or non-positive amounts
+    if (isNaN(amountNumber) || amountNumber <= 0 || category.trim() === "") {
       return;
     }
 
-    const trimmedCategory = category.trim();
-    const trimmedNote = note.trim();
-
-    if (!trimmedCategory) {
-      // Category is required
-      return;
-    }
+    const today = new Date().toISOString().split("T")[0];
 
     await db.runAsync(
-      'INSERT INTO expenses (amount, category, note, date) VALUES (?, ?, ?, ?);',
-      [amountNumber, trimmedCategory, trimmedNote || null]
+      `INSERT INTO expenses (amount, category, note, date)
+       VALUES (?, ?, ?, ?);`,
+      [amountNumber, category.trim(), note.trim() || null, today]
     );
 
     setAmount('');
     setCategory('');
     setNote('');
-    setDate('');
 
     loadExpenses();
   };
-
 
   const deleteExpense = async (id) => {
-    await db.runAsync('DELETE FROM expenses WHERE id = ?;', [id]);
+    await db.runAsync("DELETE FROM expenses WHERE id = ?;", [id]);
     loadExpenses();
   };
 
+  const startEditing = (item) => {
+    setEditItem(item);
+    setEditAmount(String(item.amount));
+    setEditCategory(item.category);
+    setEditNote(item.note || "");
+    setEditModalVisible(true);
+  };
 
-  const renderExpense = ({ item }) => (
-    <View style={styles.expenseRow}>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.expenseAmount}>${Number(item.amount).toFixed(2)}</Text>
-        <Text style={styles.expenseCategory}>{item.category}</Text>
-        {item.note ? <Text style={styles.expenseNote}>{item.note}</Text> : null}
-      </View>
+  const saveEdit = async () => {
+    await db.runAsync(
+      `UPDATE expenses
+       SET amount = ?, category = ?, note = ?
+       WHERE id = ?;`,
+      [
+        parseFloat(editAmount),
+        editCategory.trim(),
+        editNote.trim() || null,
+        editItem.id,
+      ]
+    );
 
-      <TouchableOpacity onPress={() => deleteExpense(item.id)}>
-        <Text style={styles.delete}>✕</Text>
-      </TouchableOpacity>
-    </View>
-  );
+    setEditModalVisible(false);
+    loadExpenses();
+  };
 
   useEffect(() => {
     async function setup() {
@@ -84,45 +121,61 @@ export default function ExpenseScreen() {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           amount REAL NOT NULL,
           category TEXT NOT NULL,
-          note TEXT
+          note TEXT,
+          date TEXT NOT NULL
         );
       `);
 
       await loadExpenses();
     }
 
-    useEffect(() => {
-        let query = "SELECT * FROM expenses";
-        let params = [];
-        if (filter === "week") {
-            const today = new Date();
-            const weekStart = new Date(today);
-            weekStart.setDate(today.getDate() - today.getDay());
-            const startString = weekStart.toISOString().split("T")[0];
-            
-            query += " WHERE date >= ?";
-            params.push(startString);
-        }
-        if (filter === "month") {
-            const today = new Date();
-            const monthStart = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-01`;
-            query += " WHERE date >= ?";
-            params.push(monthStart);
-        }
-        tx.executeSql(query, params, (_, { rows }) => {
-            setExpenses(rows._array);
-        });
-        loadExpenses();
-    }, [filter]);
-
-
     setup();
   }, []);
 
+  useEffect(() => {
+    loadExpenses();
+  }, [filter]);
+
+  const renderExpense = ({ item }) => (
+    <View style={styles.expenseRow}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.expenseAmount}>${item.amount.toFixed(2)}</Text>
+        <Text style={styles.expenseCategory}>{item.category}</Text>
+        {item.note ? <Text style={styles.expenseNote}>{item.note}</Text> : null}
+        <Text style={styles.expenseDate}>{item.date}</Text>
+      </View>
+
+      <TouchableOpacity onPress={() => startEditing(item)}>
+        <Text style={styles.edit}>✎</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity onPress={() => deleteExpense(item.id)}>
+        <Text style={styles.delete}>✕</Text>
+      </TouchableOpacity>
+    </View>
+  );
   return (
     <SafeAreaView style={styles.container}>
       <Text style={styles.heading}>Student Expense Tracker</Text>
+      <View style={styles.filters}>
+        <Button title="All" onPress={() => setFilter("all")} />
+        <Button title="This Week" onPress={() => setFilter("week")} />
+        <Button title="This Month" onPress={() => setFilter("month")} />
+      </View>
+      <Text style={styles.totalText}>Total Spent: ${totalSpent.toFixed(2)}</Text>
+      <View style={styles.categoryTotalsBox}>
+        <Text style={styles.sectionTitle}>Totals by Category:</Text>
 
+        {Object.keys(categoryTotals).length === 0 ? (
+          <Text style={{ color: "#9ca3af" }}>No expenses yet.</Text>
+        ) : (
+          Object.keys(categoryTotals).map((cat) => (
+            <Text key={cat} style={styles.categoryTotalItem}>
+              {cat}: ${categoryTotals[cat].toFixed(2)}
+            </Text>
+          ))
+        )}
+      </View>
       <View style={styles.form}>
         <TextInput
           style={styles.input}
@@ -146,18 +199,9 @@ export default function ExpenseScreen() {
           value={note}
           onChangeText={setNote}
         />
-        <TextInput
-          value={date}
-          onChangeText={setDate}
-          placeholder="YYYY-MM-DD"
-          style={styles.input}
-        />
-        <Button title="Add Expense" onPress={addExpense} />
-        <Button title="All" onPress={() => setFilter("all")} />
-        <Button title="This Week" onPress={() => setFilter("week")} />
-        <Button title="This Month" onPress={() => setFilter("month")} />
-      </View>
 
+        <Button title="Add Expense" onPress={addExpense} />
+      </View>
       <FlatList
         data={expenses}
         keyExtractor={(item) => item.id.toString()}
@@ -166,12 +210,39 @@ export default function ExpenseScreen() {
           <Text style={styles.empty}>No expenses yet.</Text>
         }
       />
+      <Modal visible={editModalVisible} animationType="slide" transparent>
+        <View style={styles.modalContainer}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>Edit Expense</Text>
 
-      <Text style={styles.footer}>
-        Enter your expenses and they’ll be saved locally with SQLite.
-      </Text>
+            <TextInput
+              style={styles.input}
+              value={editAmount}
+              onChangeText={setEditAmount}
+              keyboardType="numeric"
+            />
+            <TextInput
+              style={styles.input}
+              value={editCategory}
+              onChangeText={setEditCategory}
+            />
+            <TextInput
+              style={styles.input}
+              value={editNote}
+              onChangeText={setEditNote}
+              placeholder="Note"
+            />
+
+            <Button title="Save Changes" onPress={saveEdit} />
+            <Button
+              title="Cancel"
+              color="red"
+              onPress={() => setEditModalVisible(false)}
+            />
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
-
   );
 }
 
