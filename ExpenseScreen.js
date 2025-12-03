@@ -12,6 +12,9 @@ import {
 } from 'react-native';
 import { useSQLiteContext } from 'expo-sqlite';
 
+import CategoryChart from "../components/CategoryChart";
+
+
 export default function ExpenseScreen() {
   const db = useSQLiteContext();
 
